@@ -183,18 +183,18 @@ class Yolov5Detector:
             cv2.waitKey(1)  # 1 millisecond
 
         if self.publish_image:
-            # ros_image = Image()
-            # ros_image.header.stamp = rospy.Time.now()
-            # # Fill the image data 
-            # ros_image.height, ros_image.width = 384, 640
-            # ros_image.encoding = "rgb8"  # Assuming RGB format, change as needed
-            # ros_image.step = ros_image.width * 3  # Assuming 3 channels (RGB)
-            # ros_image.is_bigendian = 0
-            # ros_image.data = bytes(np.array(im0, dtype=np.uint8).flatten())
+            im0 = cv2.cvtColor(im0, cv2.COLOR_BGRA2RGBA)
+            ros_image = Image()
+            ros_image.header.stamp = rospy.Time.now()
+            # Fill the image data 
+            ros_image.height, ros_image.width = im0.shape[0], im0.shape[1]
+            ros_image.encoding = "rgba8"  # Assuming RGB format, change as needed
+            ros_image.step = ros_image.width * 4  # Assuming 3 channels (RGB)
+            ros_image.data = im0.tobytes()
 
-            # self.image_pub.publish(ros_image)
+            self.image_pub.publish(ros_image)
 
-            self.image_pub.publish(self.bridge.cv2_to_imgmsg(im0, "bgr8"))
+            # self.image_pub.publish(self.bridge.cv2_to_imgmsg(im0, "bgr8"))
         
 
     def preprocess(self, img):
