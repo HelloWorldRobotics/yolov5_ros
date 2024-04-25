@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.8
 
 import rospy
 import cv2
@@ -11,13 +11,14 @@ import os
 import sys
 from rostopic import get_topic_type
 
+from std_msgs.msg import Int16
 from sensor_msgs.msg import Image, CompressedImage
 from detection_msgs.msg import BoundingBox, BoundingBoxes
 
 
 # add yolov5 submodule to path
 FILE = Path(__file__).resolve()
-ROOT = FILE.parents[0] / "yolov5"
+ROOT = FILE.parents[0] / "yolov5-jetson"
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative path
@@ -28,7 +29,7 @@ from utils.general import (
     check_img_size,
     check_requirements,
     non_max_suppression,
-    scale_coords
+    scale_boxes
 )
 from utils.plots import Annotator, colors
 from utils.torch_utils import select_device
@@ -91,6 +92,8 @@ class Yolov5Detector:
         self.pred_pub = rospy.Publisher(
             rospy.get_param("~output_topic"), BoundingBoxes, queue_size=10
         )
+
+        self.person_pub = rospy.Publisher(rospy.get_param("~crowd_topic"), Int16, queue_size=1)
         # Initialize image publisher
         self.publish_image = rospy.get_param("~publish_image")
         if self.publish_image:
@@ -107,12 +110,10 @@ class Yolov5Detector:
         if self.compressed_input:
             im = self.bridge.compressed_imgmsg_to_cv2(data, desired_encoding="bgr8")
         else:
-            im = self.bridge.imgmsg_to_cv2(data, desired_encoding="bgr8")
+            # im = self.bridge.imgmsg_to_cv2(data, desired_encoding="bgr8")
+            im = np.frombuffer(data.data, dtype=np.uint8).reshape(data.height, data.width, -1)
         
         im, im0 = self.preprocess(im)
-        # print(im.shape)
-        # print(img0.shape)
-        # print(img.shape)
 
         # Run inference
         im = torch.from_numpy(im).to(self.device) 
@@ -131,6 +132,9 @@ class Yolov5Detector:
         # Process predictions 
         det = pred[0].cpu().numpy()
 
+        detected_person = Int16()
+        detected_person.data = 0
+
         bounding_boxes = BoundingBoxes()
         bounding_boxes.header = data.header
         bounding_boxes.image_header = data.header
@@ -138,7 +142,8 @@ class Yolov5Detector:
         annotator = Annotator(im0, line_width=self.line_thickness, example=str(self.names))
         if len(det):
             # Rescale boxes from img_size to im0 size
-            det[:, :4] = scale_coords(im.shape[2:], det[:, :4], im0.shape).round()
+            # det[:, :4] = scale_coords(im.shape[2:], det[:, :4], im0.shape).round()
+            det[:, :4] = scale_boxes(im.shape[2:], det[:, :4], im0.shape).round()
 
             # Write results
             for *xyxy, conf, cls in reversed(det):
@@ -162,18 +167,33 @@ class Yolov5Detector:
 
                 
                 ### POPULATE THE DETECTION MESSAGE HERE
+                if self.names[c] == "person":
+                    detected_person.data += 1
 
             # Stream results
             im0 = annotator.result()
 
         # Publish prediction
         self.pred_pub.publish(bounding_boxes)
+        self.person_pub.publish(detected_person)
 
         # Publish & visualize images
         if self.view_image:
             cv2.imshow(str(0), im0)
             cv2.waitKey(1)  # 1 millisecond
+
         if self.publish_image:
+            # ros_image = Image()
+            # ros_image.header.stamp = rospy.Time.now()
+            # # Fill the image data 
+            # ros_image.height, ros_image.width = 384, 640
+            # ros_image.encoding = "rgb8"  # Assuming RGB format, change as needed
+            # ros_image.step = ros_image.width * 3  # Assuming 3 channels (RGB)
+            # ros_image.is_bigendian = 0
+            # ros_image.data = bytes(np.array(im0, dtype=np.uint8).flatten())
+
+            # self.image_pub.publish(ros_image)
+
             self.image_pub.publish(self.bridge.cv2_to_imgmsg(im0, "bgr8"))
         
 
@@ -186,6 +206,9 @@ class Yolov5Detector:
         # Convert
         img = img[..., ::-1].transpose((0, 3, 1, 2))  # BGR to RGB, BHWC to BCHW
         img = np.ascontiguousarray(img)
+
+        # Only obtain RGB instead of RGBA
+        img = img[:,:3,:,:]
 
         return img, img0 
 
